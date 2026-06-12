@@ -474,7 +474,7 @@ export default function App() {
         :root {
           --bg:#0f0f13; --surface:#17171d; --surface2:#1e1e27; --border:#2a2a35;
           --accent:#7c5cfc; --accent2:#c084fc; --text:#e8e8f0; --muted:#6b6b80; --radius:12px;
-          --max-w:1180px;
+          --max-w:860px;
         }
         body { font-family:'Inter','Cairo',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
 
@@ -501,10 +501,11 @@ export default function App() {
         .tab-btn:hover { color:var(--text); background:var(--surface2); }
         .tab-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
 
-        .layout { display:flex; gap:24px; max-width:var(--max-w); margin:16px auto 0; padding:0 16px 100px; align-items:flex-start; }
-        .content-col { flex:1; min-width:0; }
-        .sidebar { width:300px; flex-shrink:0; position:sticky; top:76px; }
-        @media(max-width:1000px){ .sidebar { display:none; } }
+        /* ── Layout: content is always centered; sidebar floats outside ── */
+        .layout-outer { position:relative; padding:16px 16px 120px; }
+        .content-col { max-width:860px; margin:0 auto; }
+        .sidebar { display:none; width:300px; position:absolute; top:0; left:calc(50% + 430px + 24px); }
+        @media(min-width:1220px){ .sidebar { display:block; position:sticky; top:76px; margin-top:16px; } }
 
         .tool-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:24px; }
         .tool-card h2 { font-family:'Cairo',sans-serif; font-size:20px; font-weight:700; margin-bottom:4px; }
@@ -598,7 +599,7 @@ export default function App() {
         </div>
       </div>
 
-      <div className="layout">
+      <div className="layout-outer">
         <div className="content-col">
           <div className="tab-nav" dir={lang === "ar" ? "rtl" : "ltr"}>
             {t.nav.map((name, i) => (
@@ -617,6 +618,13 @@ export default function App() {
             {tools[active]}
             <AdSlot slot={ADSENSE.slots.inContent} label={t.adLabel} size="336×280" />
           </main>
+
+          <footer style={{
+            textAlign: "center", padding: "32px 0 8px",
+            color: "var(--muted)", fontSize: 12, letterSpacing: "0.5px",
+          }}>
+            Arabic Tools · v1.1.0
+          </footer>
         </div>
 
         <aside className="sidebar">
