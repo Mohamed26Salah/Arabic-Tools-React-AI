@@ -1,12 +1,9 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 
 // ─── AdSense config ──────────────────────────────────────────────────────────
-// After your AdSense account is approved, paste your publisher ID + slot IDs
-// here and flip `enabled` to true. Until then, labeled placeholders render so
-// you can see exactly where each ad sits.
 const ADSENSE = {
-  client: "ca-pub-XXXXXXXXXXXXXXXX", // your AdSense publisher ID
-  enabled: false,                    // set true in production (after approval)
+  client: "ca-pub-XXXXXXXXXXXXXXXX",
+  enabled: false,
   slots: {
     topLeaderboard: "0000000001",
     inContent: "0000000002",
@@ -26,8 +23,14 @@ const T = {
         title: "Word Counter",
         desc: "Count words, characters, and sentences in Arabic text.",
         placeholder: "Paste or type Arabic text here…",
-        words: "Words", chars: "Characters", sentences: "Sentences", unique: "Unique Words",
+        words: "Words",
+        chars: "Chars",
+        charsAll: "Chars (incl. spaces)",
+        sentences: "Sentences",
+        unique: "Unique Words",
         clear: "Clear",
+        copyStats: "Copy Stats",
+        copied: "Copied!",
       },
       tashkeel: {
         title: "Tashkeel Tool",
@@ -60,7 +63,7 @@ const T = {
       hijri: {
         title: "Hijri Date Converter",
         desc: "Convert Gregorian dates to the Hijri (Umm al-Qura) calendar.",
-        gregorian: "Gregorian Date", convert: "Convert",
+        gregorian: "Gregorian Date",
       },
     },
     adLabel: "Advertisement",
@@ -74,8 +77,14 @@ const T = {
         title: "عداد الكلمات",
         desc: "احسب الكلمات والأحرف والجمل في النص العربي.",
         placeholder: "الصق أو اكتب نصًا عربيًا هنا…",
-        words: "كلمات", chars: "أحرف", sentences: "جمل", unique: "كلمات فريدة",
+        words: "كلمات",
+        chars: "أحرف",
+        charsAll: "أحرف (مع مسافات)",
+        sentences: "جمل",
+        unique: "كلمات فريدة",
         clear: "مسح",
+        copyStats: "نسخ الإحصاء",
+        copied: "تم النسخ!",
       },
       tashkeel: {
         title: "أداة التشكيل",
@@ -108,31 +117,44 @@ const T = {
       hijri: {
         title: "محول التاريخ الهجري",
         desc: "تحويل التاريخ الميلادي إلى التقويم الهجري (أم القرى).",
-        gregorian: "التاريخ الميلادي", convert: "تحويل",
+        gregorian: "التاريخ الميلادي",
       },
     },
     adLabel: "إعلان",
   },
 };
 
-const HIJRI_MONTHS = ["محرم","صفر","ربيع الأول","ربيع الثاني","جمادى الأولى","جمادى الثانية","رجب","شعبان","رمضان","شوال","ذو القعدة","ذو الحجة"];
+const HIJRI_MONTHS = [
+  "محرم","صفر","ربيع الأول","ربيع الثاني",
+  "جمادى الأولى","جمادى الثانية","رجب","شعبان",
+  "رمضان","شوال","ذو القعدة","ذو الحجة",
+];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-const tashkeelRegex = /[\u0610-\u061A\u064B-\u065F\u0670]/g;
-const removeTashkeel = t => t.replace(tashkeelRegex, "");
-const countTashkeel = t => (t.match(tashkeelRegex) || []).length;
-const toWesternNumerals = t => t.replace(/[٠١٢٣٤٥٦٧٨٩]/g, d => "٠١٢٣٤٥٦٧٨٩".indexOf(d));
-const toArabicNumerals = t => t.replace(/[0-9]/g, d => "٠١٢٣٤٥٦٧٨٩"[d]);
+const ARABIC_INDIC = "٠١٢٣٤٥٦٧٨٩";
+const tashkeelRegex = /[ؐ-ًؚ-ٰٟ]/g;
+const removeTashkeel = s => s.replace(tashkeelRegex, "");
+const countTashkeel  = s => (s.match(tashkeelRegex) || []).length;
+// Unicode range /[٠-٩]/ is safer than a hardcoded string + indexOf
+const toWesternNumerals = s => s.replace(/[٠-٩]/g, d => ARABIC_INDIC.indexOf(d).toString());
+const toArabicNumerals  = s => s.replace(/[0-9]/g, d => ARABIC_INDIC[+d]);
 
 function countWords(text) {
-  if (!text.trim()) return { words: 0, chars: 0, sentences: 0, unique: 0 };
+  if (!text.trim()) return { words: 0, chars: 0, charsAll: 0, sentences: 0, unique: 0 };
   const words = text.trim().split(/\s+/).filter(Boolean);
   const sentences = text.split(/[.!?؟\n]+/).filter(s => s.trim());
-  const unique = new Set(words).size;
-  return { words: words.length, chars: text.replace(/\s/g, "").length, sentences: sentences.length, unique };
+  // Strip tashkeel before uniqueness check so "كتب" and "كَتَبَ" count as one word
+  const unique = new Set(words.map(w => removeTashkeel(w))).size;
+  return {
+    words: words.length,
+    chars: text.replace(/\s/g, "").length,
+    charsAll: text.length,
+    sentences: sentences.length,
+    unique,
+  };
 }
 
-// FIX #1: accurate conversion via the browser's built-in Umm al-Qura calendar
+// Accurate Hijri conversion via browser's built-in Umm al-Qura calendar
 function gregorianToHijri(dateStr) {
   const d = new Date(dateStr + "T12:00:00");
   if (isNaN(d.getTime())) return null;
@@ -142,8 +164,8 @@ function gregorianToHijri(dateStr) {
     }).formatToParts(d);
     const get = type => parts.find(p => p.type === type)?.value;
     const month = parseInt(get("month"), 10);
-    const day = parseInt(get("day"), 10);
-    const year = parseInt(get("year"), 10);
+    const day   = parseInt(get("day"), 10);
+    const year  = parseInt(get("year"), 10);
     if (!month || !day || !year) return null;
     return { day, month, year, monthName: HIJRI_MONTHS[month - 1] };
   } catch {
@@ -151,54 +173,78 @@ function gregorianToHijri(dateStr) {
   }
 }
 
-// detect dominant direction of a single line
+// Detect dominant direction of a single line (returns true=RTL, false=LTR, null=neutral)
 function lineIsRTL(line) {
   const letters = line.replace(/[\s\d.,!?@#%&*()_+\-=[\]{};:'"<>/\\|`~]/g, "");
-  if (!letters.length) return null; // no letters → neutral
-  const arabic = (letters.match(/[\u0600-\u06FF\u0750-\u077F]/g) || []).length;
+  if (!letters.length) return null;
+  const arabic = (letters.match(/[؀-ۿݐ-ݿ]/g) || []).length;
   return arabic >= letters.length / 2;
 }
 
 // ─── Reusable copy hook ──────────────────────────────────────────────────────
 function useCopy() {
   const [copied, setCopied] = useState(false);
-  const copy = text => {
-    if (navigator?.clipboard) navigator.clipboard.writeText(text);
+  const timerRef = useRef(null);
+  const copy = useCallback(text => {
+    if (!text) return;
+    navigator.clipboard?.writeText(text).catch(() => {});
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
+    clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => setCopied(false), 2000);
+  }, []);
   return [copied, copy];
 }
 
 // ─── Tools ───────────────────────────────────────────────────────────────────
 function WordCounter({ t }) {
   const [text, setText] = useState("");
+  const [copied, copy] = useCopy();
   const stats = countWords(text);
+
+  const statsList = [
+    ["words",    "#7c5cfc"],
+    ["chars",    "#06b6d4"],
+    ["charsAll", "#0ea5e9"],
+    ["sentences","#34d399"],
+    ["unique",   "#fbbf24"],
+  ];
+
+  const statsText = statsList
+    .map(([k]) => `${t[k]}: ${stats[k]}`)
+    .join("\n");
+
   return (
     <div className="tool-card">
       <h2>{t.title}</h2>
       <p className="tool-desc">{t.desc}</p>
       <textarea dir="rtl" placeholder={t.placeholder} value={text} onChange={e => setText(e.target.value)} rows={6} />
       <div className="stats-grid">
-        {[["words","#7c5cfc"],["chars","#06b6d4"],["sentences","#34d399"],["unique","#fbbf24"]].map(([k,c]) => (
+        {statsList.map(([k, c]) => (
           <div key={k} className="stat-box" style={{ borderTopColor: c }}>
             <span className="stat-num" style={{ color: c }}>{stats[k]}</span>
             <span className="stat-label">{t[k]}</span>
           </div>
         ))}
       </div>
-      <button className="btn-secondary" onClick={() => setText("")}>{t.clear}</button>
+      <div className="btn-row">
+        <button className="btn-secondary" onClick={() => setText("")}>{t.clear}</button>
+        {text && (
+          <button className="btn-copy" onClick={() => copy(statsText)}>
+            {copied ? t.copied : t.copyStats}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
 
 function TashkeelTool({ t }) {
   const [input, setInput] = useState("أَهْلًا وَسَهْلًا بِكَ فِي أَدَوَاتِ اللُّغَةِ الْعَرَبِيَّةِ");
-  const [result, setResult] = useState(null); // { text, count } | null
+  const [result, setResult] = useState(null);
   const [copied, copy] = useCopy();
 
   const handleRemove = () => setResult({ text: removeTashkeel(input), count: countTashkeel(input) });
-  const handleClear = () => { setInput(""); setResult(null); };
+  const handleClear  = () => { setInput(""); setResult(null); };
 
   return (
     <div className="tool-card">
@@ -212,7 +258,7 @@ function TashkeelTool({ t }) {
       {result && (
         <div className="result-box">
           <div className="result-header">
-            <span>{t.result} · {t.removedCount(result.count)}</span>
+            <span>{t.result} &middot; {t.removedCount(result.count)}</span>
             <button className="btn-copy" onClick={() => copy(result.text)}>{copied ? t.copied : t.copy}</button>
           </div>
           <p dir="rtl" style={{ fontSize: 18, lineHeight: 2 }}>{result.text || "—"}</p>
@@ -222,7 +268,6 @@ function TashkeelTool({ t }) {
   );
 }
 
-// FIX #2: output is derived from input + mode, so it's always live and clears correctly
 function NumberConverter({ t }) {
   const [input, setInput] = useState("");
   const [mode, setMode] = useState("toWestern");
@@ -242,20 +287,21 @@ function NumberConverter({ t }) {
         <div>
           <label className="output-label">
             {t.output}
-            {output && <button className="btn-copy" onClick={() => copy(output)}>{copied ? t.copied : t.copy}</button>}
+            {output && (
+              <button className="btn-copy" onClick={() => copy(output)}>{copied ? t.copied : t.copy}</button>
+            )}
           </label>
           <textarea dir="auto" value={output} readOnly rows={4} style={{ background: "var(--surface)" }} />
         </div>
       </div>
       <div className="btn-row">
         <button className={`btn-toggle${mode === "toWestern" ? " active" : ""}`} onClick={() => setMode("toWestern")}>{t.toWestern}</button>
-        <button className={`btn-toggle${mode === "toArabic" ? " active" : ""}`} onClick={() => setMode("toArabic")}>{t.toArabic}</button>
+        <button className={`btn-toggle${mode === "toArabic"  ? " active" : ""}`} onClick={() => setMode("toArabic")}>{t.toArabic}</button>
       </div>
     </div>
   );
 }
 
-// FIX #3: copy emits text with per-line directional marks so it pastes correctly
 function RTLFixer({ t }) {
   const [input, setInput] = useState("");
   const [copied, copy] = useCopy();
@@ -265,8 +311,9 @@ function RTLFixer({ t }) {
     return { text: line, dir: rtl === null ? "ltr" : rtl ? "rtl" : "ltr", neutral: rtl === null };
   });
 
+  // Prepend Unicode directional marks so the text pastes with correct direction
   const fixedText = lines
-    .map(l => (l.neutral ? l.text : (l.dir === "rtl" ? "\u200F" : "\u200E") + l.text))
+    .map(l => (l.neutral ? l.text : (l.dir === "rtl" ? "‏" : "‎") + l.text))
     .join("\n");
 
   return (
@@ -281,10 +328,15 @@ function RTLFixer({ t }) {
             <button className="btn-copy" onClick={() => copy(fixedText)}>{copied ? t.copied : t.copy}</button>
           </div>
           {lines.map((line, i) => (
-            <p key={i} dir={line.dir}
-              style={{ margin: "4px 0", padding: "6px 10px", borderRadius: 6, fontSize: 15,
-                background: line.neutral ? "var(--surface)" : line.dir === "rtl" ? "#7c5cfc18" : "#06b6d418" }}>
-              {line.text || "\u00A0"}
+            <p
+              key={i}
+              dir={line.dir}
+              style={{
+                margin: "4px 0", padding: "6px 10px", borderRadius: 6, fontSize: 15,
+                background: line.neutral ? "var(--surface)" : line.dir === "rtl" ? "#7c5cfc18" : "#06b6d418",
+              }}
+            >
+              {line.text || " "}
             </p>
           ))}
         </div>
@@ -294,11 +346,11 @@ function RTLFixer({ t }) {
 }
 
 const ARABIC_FONTS = [
-  { name: "Amiri", value: "'Amiri', serif" },
-  { name: "Cairo", value: "'Cairo', sans-serif" },
-  { name: "Tajawal", value: "'Tajawal', sans-serif" },
+  { name: "Amiri",            value: "'Amiri', serif" },
+  { name: "Cairo",            value: "'Cairo', sans-serif" },
+  { name: "Tajawal",          value: "'Tajawal', sans-serif" },
   { name: "Scheherazade New", value: "'Scheherazade New', serif" },
-  { name: "Lateef", value: "'Lateef', serif" },
+  { name: "Lateef",           value: "'Lateef', serif" },
 ];
 
 function FontPreviewer({ t }) {
@@ -319,7 +371,7 @@ function FontPreviewer({ t }) {
         </div>
         <div className="control-group">
           <label>{t.size}: {size}px</label>
-          <input type="range" min={14} max={60} value={size} onChange={e => setSize(+e.target.value)} />
+          <input type="range" min={14} max={72} value={size} onChange={e => setSize(+e.target.value)} />
         </div>
       </div>
       <div className="font-preview" style={{ fontFamily: font, fontSize: size, lineHeight: 1.8 }}>
@@ -327,8 +379,12 @@ function FontPreviewer({ t }) {
       </div>
       <div className="font-swatches">
         {ARABIC_FONTS.map(f => (
-          <div key={f.value} className={`font-swatch${font === f.value ? " active" : ""}`}
-            onClick={() => setFont(f.value)} style={{ fontFamily: f.value }}>
+          <div
+            key={f.value}
+            className={`font-swatch${font === f.value ? " active" : ""}`}
+            onClick={() => setFont(f.value)}
+            style={{ fontFamily: f.value }}
+          >
             {f.name}
           </div>
         ))}
@@ -340,6 +396,7 @@ function FontPreviewer({ t }) {
 function HijriConverter({ t }) {
   const today = new Date().toISOString().split("T")[0];
   const [date, setDate] = useState(today);
+  // Live — result updates as the date input changes, no button needed
   const result = gregorianToHijri(date);
   return (
     <div className="tool-card">
@@ -364,8 +421,6 @@ function HijriConverter({ t }) {
 }
 
 // ─── Ad slot ─────────────────────────────────────────────────────────────────
-// Renders a real AdSense unit when ADSENSE.enabled is true, otherwise a labeled
-// placeholder so the layout matches production exactly.
 function AdSlot({ slot, label, size, format = "auto", responsive = true }) {
   const ref = useRef(null);
   useEffect(() => {
@@ -377,13 +432,13 @@ function AdSlot({ slot, label, size, format = "auto", responsive = true }) {
   if (ADSENSE.enabled) {
     return (
       <ins
+        ref={ref}
         className="adsbygoogle"
         style={{ display: "block" }}
         data-ad-client={ADSENSE.client}
         data-ad-slot={slot}
         data-ad-format={format}
         data-full-width-responsive={responsive ? "true" : "false"}
-        ref={ref}
       />
     );
   }
@@ -403,12 +458,12 @@ export default function App() {
   const t = T[lang];
 
   const tools = [
-    <TashkeelTool key="tk" t={t.tools.tashkeel} />,
-    <FontPreviewer key="fp" t={t.tools.font} />,
-    <WordCounter key="wc" t={t.tools.wordCounter} />,
-    <NumberConverter key="nc" t={t.tools.numbers} />,
-    <RTLFixer key="rtl" t={t.tools.rtl} />,
-    <HijriConverter key="hj" t={t.tools.hijri} />,
+    <TashkeelTool    key="tk"  t={t.tools.tashkeel} />,
+    <FontPreviewer   key="fp"  t={t.tools.font} />,
+    <WordCounter     key="wc"  t={t.tools.wordCounter} />,
+    <NumberConverter key="nc"  t={t.tools.numbers} />,
+    <RTLFixer        key="rtl" t={t.tools.rtl} />,
+    <HijriConverter  key="hj"  t={t.tools.hijri} />,
   ];
 
   return (
@@ -419,29 +474,38 @@ export default function App() {
         :root {
           --bg:#0f0f13; --surface:#17171d; --surface2:#1e1e27; --border:#2a2a35;
           --accent:#7c5cfc; --accent2:#c084fc; --text:#e8e8f0; --muted:#6b6b80; --radius:12px;
+          --max-w:1180px;
         }
         body { font-family:'Inter','Cairo',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
-        .header { background:var(--surface); border-bottom:1px solid var(--border); padding:0 24px;
-          display:flex; align-items:center; gap:16px; height:60px; position:sticky; top:0; z-index:100; }
+
+        /* ── Header — inner wrapper aligns with the content layout ── */
+        .header { background:var(--surface); border-bottom:1px solid var(--border); padding:0 16px; position:sticky; top:0; z-index:100; }
+        .header-inner { max-width:var(--max-w); margin:0 auto; height:60px; display:flex; align-items:center; gap:16px; padding:0 8px; }
         .site-logo { font-family:'Cairo',sans-serif; font-size:20px; font-weight:700;
           background:linear-gradient(135deg,var(--accent),var(--accent2));
           -webkit-background-clip:text; -webkit-text-fill-color:transparent; flex-shrink:0; }
         .lang-toggle { margin-inline-start:auto; background:var(--surface2); border:1px solid var(--border);
           color:var(--text); border-radius:8px; padding:6px 14px; cursor:pointer; font-size:13px; transition:border-color .2s; }
         .lang-toggle:hover { border-color:var(--accent); }
+
+        /* ── Hero — constrained to layout width ── */
         .hero { text-align:center; padding:40px 24px 20px; }
+        .hero-inner { max-width:600px; margin:0 auto; }
         .hero h1 { font-family:'Cairo',sans-serif; font-size:clamp(22px,5vw,36px); font-weight:700; margin-bottom:8px; }
         .hero p { color:var(--muted); font-size:15px; }
+
         .tab-nav { display:flex; gap:4px; overflow-x:auto; padding:0; margin:0 0 16px; scrollbar-width:none; }
         .tab-nav::-webkit-scrollbar { display:none; }
         .tab-btn { white-space:nowrap; padding:8px 16px; border-radius:8px; border:1px solid transparent;
           background:transparent; color:var(--muted); cursor:pointer; font-size:13px; font-family:inherit; transition:all .15s; }
         .tab-btn:hover { color:var(--text); background:var(--surface2); }
         .tab-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
-        .layout { display:flex; gap:24px; max-width:1180px; margin:16px auto 0; padding:0 16px 100px; align-items:flex-start; }
-        .content-col { flex:1; min-width:0; max-width:860px; }
+
+        .layout { display:flex; gap:24px; max-width:var(--max-w); margin:16px auto 0; padding:0 16px 100px; align-items:flex-start; }
+        .content-col { flex:1; min-width:0; }
         .sidebar { width:300px; flex-shrink:0; position:sticky; top:76px; }
         @media(max-width:1000px){ .sidebar { display:none; } }
+
         .tool-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:24px; }
         .tool-card h2 { font-family:'Cairo',sans-serif; font-size:20px; font-weight:700; margin-bottom:4px; }
         .tool-desc { color:var(--muted); font-size:13px; margin-bottom:16px; line-height:1.6; }
@@ -462,17 +526,22 @@ export default function App() {
         .btn-toggle:hover { border-color:var(--accent); color:var(--text); }
         .btn-toggle.active { background:var(--accent); color:#fff; border-color:var(--accent); }
         .btn-copy { background:transparent; color:var(--accent); border:1px solid var(--accent); border-radius:6px;
-          padding:3px 12px; cursor:pointer; font-size:12px; font-family:inherit; }
-        .btn-row { display:flex; gap:8px; margin:12px 0 0; flex-wrap:wrap; }
-        .stats-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin:16px 0; }
-        @media(max-width:500px){ .stats-grid { grid-template-columns:repeat(2,1fr); } }
+          padding:3px 12px; cursor:pointer; font-size:12px; font-family:inherit; transition:background .15s; }
+        .btn-copy:hover { background:#7c5cfc15; }
+        .btn-row { display:flex; gap:8px; margin:12px 0 0; flex-wrap:wrap; align-items:center; }
+
+        /* 5-column stats grid */
+        .stats-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin:16px 0; }
+        @media(max-width:640px){ .stats-grid { grid-template-columns:repeat(3,1fr); } }
+        @media(max-width:400px){ .stats-grid { grid-template-columns:repeat(2,1fr); } }
         .stat-box { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:14px 10px;
-          text-align:center; border-top:3px solid var(--accent); }
+          text-align:center; border-top:3px solid; }
         .stat-num { display:block; font-size:28px; font-weight:700; }
         .stat-label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:1px; }
+
         .result-box { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:16px; margin-top:14px; }
         .result-header { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:10px;
-          font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
+          font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; flex-wrap:wrap; }
         .two-col { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px; }
         @media(max-width:500px){ .two-col { grid-template-columns:1fr; } }
         label { display:block; font-size:12px; color:var(--muted); margin-bottom:6px; text-transform:uppercase; letter-spacing:.5px; }
@@ -512,44 +581,49 @@ export default function App() {
         .ad-anchor-close:hover { border-color:var(--accent); color:var(--text); }
       `}</style>
 
+      {/* Header — inner wrapper centers content with the layout below */}
       <header className="header">
-        <div className="site-logo">أدوات · Arabic Tools</div>
-        <button className="lang-toggle" onClick={() => setLang(l => l === "ar" ? "en" : "ar")}>
-          {lang === "ar" ? "English" : "عربي"}
-        </button>
+        <div className="header-inner">
+          <div className="site-logo">أدوات · Arabic Tools</div>
+          <button className="lang-toggle" onClick={() => setLang(l => l === "ar" ? "en" : "ar")}>
+            {lang === "ar" ? "English" : "عربي"}
+          </button>
+        </div>
       </header>
 
       <div className="hero">
-        <h1>{t.heroTitle}</h1>
-        <p>{t.siteTagline}</p>
+        <div className="hero-inner">
+          <h1>{t.heroTitle}</h1>
+          <p>{t.siteTagline}</p>
+        </div>
       </div>
 
       <div className="layout">
         <div className="content-col">
           <div className="tab-nav" dir={lang === "ar" ? "rtl" : "ltr"}>
             {t.nav.map((name, i) => (
-              <button key={i} className={`tab-btn${active === i ? " active" : ""}`} onClick={() => setActive(i)}>{name}</button>
+              <button
+                key={i}
+                className={`tab-btn${active === i ? " active" : ""}`}
+                onClick={() => setActive(i)}
+              >
+                {name}
+              </button>
             ))}
           </div>
 
           <main dir={lang === "ar" ? "rtl" : "ltr"}>
-            {/* Ad 1 — top leaderboard, above the tool */}
             <AdSlot slot={ADSENSE.slots.topLeaderboard} label={t.adLabel} size="728×90" />
-
             {tools[active]}
-
-            {/* Ad 2 — in-content rectangle, below the tool */}
             <AdSlot slot={ADSENSE.slots.inContent} label={t.adLabel} size="336×280" />
           </main>
         </div>
 
-        {/* Ad 3 — desktop sidebar skyscraper (hidden on mobile) */}
         <aside className="sidebar">
           <AdSlot slot={ADSENSE.slots.sidebar} label={t.adLabel} size="300×600" />
         </aside>
       </div>
 
-      {/* Ad 4 — sticky bottom anchor, dismissible */}
       {!anchorClosed && (
         <div className="ad-anchor">
           <button className="ad-anchor-close" onClick={() => setAnchorClosed(true)} aria-label="Close ad">×</button>
