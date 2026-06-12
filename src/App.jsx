@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { SpeedInsights } from "@vercel/speed-insights/react";
 
 // ─── AdSense config ──────────────────────────────────────────────────────────
 const ADSENSE = {
@@ -638,6 +639,7 @@ export default function App() {
           <AdSlot slot={ADSENSE.slots.bottomAnchor} label={t.adLabel} size="320×50" />
         </div>
       )}
+      <SpeedInsights />
     </>
   );
 }
